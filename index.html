@@ -538,7 +538,7 @@ function ProcurementAllocationSystem() {
   const savingsPct = result.minCost > 0 ? (extraCost / result.minCost) * 100 : 0;
 
   return (
-    <div className="pas-root">
+    <div className="pas-root" style={{ maxWidth: 760, margin: "0 auto" }}>
       <style>{STYLE}</style>
 
       {/* Header */}
