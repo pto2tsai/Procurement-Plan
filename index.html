@@ -238,10 +238,16 @@ function ProcurementAllocationSystem() {
   const [importInfo, setImportInfo] = useState(null); // {fileName, matchedRows, skippedRows}
   const [importError, setImportError] = useState(null);
 
+  // GRADE_ALIASES：不同報表對同一個規格等級的不同標示方式（已由使用者確認），
+  // 匯入解析時統一歸到報價單使用的標準規格名稱，避免被誤判成「沒有報價」的新規格
+  const GRADE_ALIASES = { "130/150": "120/150", "36/40": "30/40" };
+
   const extractGrade = (text) => {
     if (!text) return null;
     const m = String(text).match(/(\d{2,3})\s*[\/\-]\s*(\d{2,3})/);
-    return m ? `${m[1]}/${m[2]}` : null;
+    if (!m) return null;
+    const grade = `${m[1]}/${m[2]}`;
+    return GRADE_ALIASES[grade] || grade;
   };
 
   // Score + detect which columns are 規格 and 耗用量(KG)，優先用進耗存表的勾稽關係驗證
@@ -706,8 +712,24 @@ function ProcurementAllocationSystem() {
                   const cell = quotes[s.id]?.[v.id] || { price: "", ratio: 100 };
                   return (
                     <div key={v.id} style={{ width: 164, display: "flex", gap: 6 }}>
-                      <input type="number" placeholder="—" value={cell.price} onChange={(e) => updateQuote(s.id, v.id, "price", e.target.value)} className="pas-input" style={{ width: 66, textAlign: "right" }} />
-                      <input type="number" min={0} max={100} value={cell.ratio} onChange={(e) => updateQuote(s.id, v.id, "ratio", Number(e.target.value))} className="pas-input" style={{ width: 68, textAlign: "right", padding: "6px 6px" }} disabled={cell.price === "" || cell.price === undefined} />
+                      <div style={{ position: "relative", width: 66 }}>
+                        <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "var(--text-2)", pointerEvents: "none" }}>$</span>
+                        <input
+                          type="number" placeholder="—" value={cell.price}
+                          onChange={(e) => updateQuote(s.id, v.id, "price", e.target.value)}
+                          className="pas-input"
+                          style={{ width: "100%", textAlign: "right", paddingLeft: 16 }}
+                        />
+                      </div>
+                      <div style={{ position: "relative", width: 68 }}>
+                        <input
+                          type="number" min={0} max={100} value={cell.ratio}
+                          onChange={(e) => updateQuote(s.id, v.id, "ratio", Number(e.target.value))}
+                          className="pas-input"
+                          style={{ width: "100%", textAlign: "right", padding: "6px 20px 6px 6px", background: "var(--blue-tint)", color: "var(--blue)", fontWeight: 600 }}
+                        />
+                        <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: "var(--blue)", pointerEvents: "none" }}>%</span>
+                      </div>
                     </div>
                   );
                 })}
