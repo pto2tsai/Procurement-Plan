@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.22.20/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
   html, body { margin: 0; padding: 0; background: #F2F2F7; }
   @media (prefers-color-scheme: dark) { html, body { background: #000000; } }
@@ -166,8 +167,8 @@ function ProcurementAllocationSystem() {
       10: { 1: 240 },
     };
     const ratioTable = {
-      1: { 2: 0 }, 2: { 2: 0 }, 3: { 2: 50 }, 4: { 2: 50 }, 5: { 2: 80 },
-      6: { 2: 80 }, 7: { 2: 50 }, 8: { 2: 80 }, 9: { 2: 50 },
+      1: { 2: 0 }, 2: { 2: 0 }, 3: { 2: 0 }, 4: { 2: 0 }, 5: { 2: 60 },
+      6: { 2: 60 }, 7: { 2: 100 }, 8: { 2: 60 }, 9: { 2: 100 },
     };
     const q = {};
     for (const s of [1,2,3,4,5,6,7,8,9,10]) {
@@ -234,6 +235,8 @@ function ProcurementAllocationSystem() {
   const [detection, setDetection] = useState(null); // {mode, confidence, reportType, balanceInfo}
   const [specColSel, setSpecColSel] = useState(-1);
   const [qtyColsSel, setQtyColsSel] = useState([]); // array of column indices to SUM together
+  const [productOptions, setProductOptions] = useState([]); // [{name, count}] distinct 品名 found in the file
+  const [productChoices, setProductChoices] = useState([]); // array of 品名 to include when aggregating (merged together)
   const [importPreview, setImportPreview] = useState(null); // [{name, usage}]
   const [importInfo, setImportInfo] = useState(null); // {fileName, matchedRows, skippedRows}
   const [importError, setImportError] = useState(null);
@@ -274,6 +277,14 @@ function ProcurementAllocationSystem() {
         if (ratio > best.ratio) best = { idx, ratio };
       });
       specCol = best.idx;
+    }
+
+    // 1b) 品名欄（跟規格欄不同的一欄）——同一份報表可能混著好幾個不同品項（例如「502白仁」跟「單凍白仁原料」），
+    // 有品名欄才能篩選只匯入其中一個品項，避免把不同品項的量加在一起
+    let nameCol = normHeader.findIndex((h, idx) => h.includes("品名") && idx !== specCol);
+    if (nameCol === -1) {
+      const candidate = normHeader.findIndex((h, idx) => h.includes("名稱") && idx !== specCol && !h.includes("庫別"));
+      if (candidate !== -1) nameCol = candidate;
     }
 
     // 2) parse numeric columns (excluding spec col and obvious "包裝"件數欄，那些單位是件不是KG)
@@ -320,7 +331,7 @@ function ProcurementAllocationSystem() {
 
     if (balanceResult) {
       return {
-        specCol, qtyCols: [balanceResult.usageCol], numericColIdxs,
+        specCol, nameCol, qtyCols: [balanceResult.usageCol], numericColIdxs,
         confidence: "high", mode: "balance", reportType: "進耗存表",
         detail: `已透過「期初結存＋本期進貨－本期耗用＝期末結存」的勾稽關係驗證（${dataRows.length}列中${balanceResult.total}列可比對，符合率${Math.round(balanceResult.matchRate * 100)}%）`,
       };
@@ -374,7 +385,7 @@ function ProcurementAllocationSystem() {
       confidence = "low";
       detail = "找不到明確的進耗存勾稽關係，也沒有明顯的「領料／銷貨／出庫」欄位名稱，此為系統最佳猜測，建議手動確認";
     }
-    return { specCol, qtyCols, numericColIdxs, confidence, mode: "keyword", reportType: "單一數量表", detail };
+    return { specCol, nameCol, qtyCols, numericColIdxs, confidence, mode: "keyword", reportType: "單一數量表", detail };
   };
 
   const handleFileSelect = async (e) => {
@@ -406,10 +417,31 @@ function ProcurementAllocationSystem() {
       const det = detectColumns(aoa, headerIdx, header);
       if (det.specCol === -1 || det.qtyCols.length === 0) throw new Error("無法自動判斷規格欄或數量欄，請確認檔案格式");
 
+      // 若有獨立的品名欄，掃一遍找出報表裡有幾個不同品項（用「往下延續」的方式：
+      // 小計列的品名欄通常是空的，要沿用上一個有值的品名）
+      let productOptions = [];
+      if (det.nameCol !== -1) {
+        const counts = {};
+        let current = null;
+        for (let i = headerIdx + 1; i < aoa.length; i++) {
+          const row = aoa[i];
+          if (!row || row.every((c) => c === "")) continue;
+          if (row[det.nameCol]) current = String(row[det.nameCol]);
+          if (current && row[det.specCol] && extractGrade(row[det.specCol])) {
+            counts[current] = (counts[current] || 0) + 1;
+          }
+        }
+        productOptions = Object.entries(counts)
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count);
+      }
+
       setRawImport({ aoa, headerIdx, header, fileName: file.name });
       setDetection(det);
       setSpecColSel(det.specCol);
       setQtyColsSel(det.qtyCols);
+      setProductOptions(productOptions);
+      setProductChoices(productOptions.map((p) => p.name)); // 預設全選＝全部品項合併計算
       setImportStage("detected");
     } catch (err) {
       setImportError(err.message || "檔案解析失敗，請確認格式");
@@ -425,14 +457,25 @@ function ProcurementAllocationSystem() {
     setQtyColsSel((prev) => (prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx]));
   };
 
+  const toggleProduct = (name) => {
+    setProductChoices((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]));
+  };
+
   const runAggregation = () => {
     if (!rawImport || specColSel < 0 || qtyColsSel.length === 0) { setImportError("請選擇規格欄，並至少勾選一個數量欄"); return; }
     const { aoa, headerIdx, fileName } = rawImport;
+    const nameCol = detection?.nameCol ?? -1;
     const agg = {};
-    let matched = 0, skipped = 0;
+    let matched = 0, skipped = 0, filteredOut = 0;
+    let currentName = null;
     for (let i = headerIdx + 1; i < aoa.length; i++) {
       const row = aoa[i];
       if (!row || row.every((c) => c === "")) continue;
+      if (nameCol !== -1 && row[nameCol]) currentName = String(row[nameCol]);
+      if (nameCol !== -1 && productChoices.length > 0 && !productChoices.includes(currentName)) {
+        if (row[specColSel] && extractGrade(row[specColSel])) filteredOut++;
+        continue;
+      }
       const specText = row[specColSel];
       let qty = 0, anyValid = false;
       for (const col of qtyColsSel) {
@@ -450,7 +493,7 @@ function ProcurementAllocationSystem() {
     rows.sort((a, b) => b.usage - a.usage);
     setImportError(null);
     setImportPreview(rows);
-    setImportInfo({ fileName, matchedRows: matched, skippedRows: skipped });
+    setImportInfo({ fileName, matchedRows: matched, skippedRows: skipped, filteredOut });
     setImportStage("preview");
   };
 
@@ -472,6 +515,8 @@ function ProcurementAllocationSystem() {
     setImportStage(null);
     setRawImport(null);
     setDetection(null);
+    setProductOptions([]);
+    setProductChoices([]);
   };
 
   const cancelImport = () => {
@@ -481,6 +526,8 @@ function ProcurementAllocationSystem() {
     setImportStage(null);
     setRawImport(null);
     setDetection(null);
+    setProductOptions([]);
+    setProductChoices([]);
   };
 
   const vendorIdx = (vendorId) => vendors.findIndex((v) => v.id === vendorId);
@@ -543,6 +590,189 @@ function ProcurementAllocationSystem() {
   const extraCost = result.totalCost - result.minCost;
   const savingsPct = result.minCost > 0 ? (extraCost / result.minCost) * 100 : 0;
 
+  // ---- 月度訂購單匯出 ----
+  const [orderStartMonth, setOrderStartMonth] = useState("2026-08");
+  const [orderMonths, setOrderMonths] = useState(7);
+
+  const genMonthLabels = (startYM, count) => {
+    let [y, m] = startYM.split("-").map(Number);
+    const labels = [];
+    for (let i = 0; i < count; i++) {
+      labels.push(`${y}年${m}月`);
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+    return labels;
+  };
+
+  // 建立共用的訂購單資料模型（跟環境無關），兩種匯出方式都從這裡取資料
+  const buildOrderData = () => {
+    const monthLabels = genMonthLabels(orderStartMonth, orderMonths);
+    const vendorSheets = [];
+
+    vendors.forEach((v) => {
+      const rows = [];
+      specs.forEach((s) => {
+        const allocRows = result.allocations[s.id] || [];
+        const alloc = allocRows.find((a) => a.vendorId === v.id);
+        if (!alloc || alloc.qty <= 0.001) return;
+        const perMonth = Math.round((alloc.qty / orderMonths) * 10) / 10;
+        const monthly = Array.from({ length: orderMonths - 1 }, () => perMonth);
+        const lastMonth = Math.round((alloc.qty - perMonth * (orderMonths - 1)) * 10) / 10;
+        monthly.push(lastMonth);
+        const qty = Math.round(alloc.qty * 10) / 10;
+        const amount = Math.round(alloc.qty * alloc.price);
+        rows.push({ spec: s.name, price: alloc.price, qty, monthly, amount });
+      });
+      if (rows.length === 0) return;
+      const qtyTotal = Math.round(rows.reduce((sum, r) => sum + r.qty, 0) * 10) / 10;
+      const monthTotals = monthLabels.map((_, i) => Math.round(rows.reduce((sum, r) => sum + r.monthly[i], 0) * 10) / 10);
+      const amtTotal = Math.round(rows.reduce((sum, r) => sum + r.amount, 0));
+      vendorSheets.push({ vendorName: v.name, rows, qtyTotal, monthTotals, amtTotal });
+    });
+
+    const unallocatedSpecs = [];
+    specs.forEach((s) => {
+      if (s.usage <= 0) return;
+      const allocRows = result.allocations[s.id] || [];
+      const totalAllocated = allocRows.reduce((sum, a) => sum + a.qty, 0);
+      if (totalAllocated < s.usage - 0.5) unallocatedSpecs.push(s.name);
+    });
+
+    return { monthLabels, vendorSheets, unallocatedSpecs };
+  };
+
+  // 陽春版：用SheetJS社群版輸出，沒有顏色/框線樣式，但在對話框內的預覽環境也能跑
+  const exportPlain = ({ monthLabels, vendorSheets, unallocatedSpecs }) => {
+    const wb = XLSX.utils.book_new();
+    vendorSheets.forEach(({ vendorName, rows, qtyTotal, monthTotals, amtTotal }) => {
+      const header = ["規格", "單價(元/KG)", "年度採購量(KG)", ...monthLabels, "年度採購金額(NT$)"];
+      const dataRows = rows.map((r) => [r.spec, r.price, r.qty, ...r.monthly, r.amount]);
+      const totalRow = ["合計", "", qtyTotal, ...monthTotals, amtTotal];
+      const aoa = [
+        [`採購訂單 － ${vendorName}`],
+        [`交貨期間：${monthLabels[0]} ～ ${monthLabels[monthLabels.length - 1]}（共${orderMonths}個月，預設平均分配，可自行調整）`],
+        [],
+        header,
+        ...dataRows,
+        totalRow,
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 16 }, ...monthLabels.map(() => ({ wch: 11 })), { wch: 16 }];
+      XLSX.utils.book_append_sheet(wb, ws, `${vendorName}-採購訂單`.slice(0, 31));
+    });
+    if (unallocatedSpecs.length > 0) {
+      const noteAoa = [
+        ["備註：以下規格因缺少報價或分配不足，未能完整列入訂單，請另行確認"],
+        [], ["規格"], ...unallocatedSpecs.map((n) => [n]),
+      ];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(noteAoa), "備註");
+    }
+    XLSX.writeFile(wb, "採購訂單.xlsx");
+  };
+
+  // 美化版：用ExcelJS輸出，有顏色、粗體標題、框線，跟原本Excel範本一致的風格
+  const exportStyled = async ({ monthLabels, vendorSheets, unallocatedSpecs }) => {
+    const workbook = new window.ExcelJS.Workbook();
+    const THIN = { style: "thin", color: { argb: "FFBFBFBF" } };
+    const BORDER = { top: THIN, bottom: THIN, left: THIN, right: THIN };
+    const HEADER_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F4E78" } };
+    const TOTAL_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFD9E1F2" } };
+    const NOTE_FILL = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF2CC" } };
+
+    vendorSheets.forEach(({ vendorName, rows, qtyTotal, monthTotals, amtTotal }) => {
+      const sheetName = `${vendorName}-採購訂單`.slice(0, 31);
+      const ws = workbook.addWorksheet(sheetName, { views: [{ state: "frozen", ySplit: 4 }] });
+
+      ws.mergeCells(1, 1, 1, 4);
+      const titleCell = ws.getCell(1, 1);
+      titleCell.value = `採購訂單 － ${vendorName}`;
+      titleCell.font = { name: "Arial", bold: true, size: 16 };
+
+      ws.mergeCells(2, 1, 2, 4 + orderMonths);
+      const subCell = ws.getCell(2, 1);
+      subCell.value = `交貨期間：${monthLabels[0]} ～ ${monthLabels[monthLabels.length - 1]}（共${orderMonths}個月，預設平均分配，可自行調整月份數字）`;
+      subCell.font = { name: "Arial", size: 10, color: { argb: "FF595959" } };
+
+      const header = ["規格", "單價(元/KG)", "年度採購量(KG)", ...monthLabels, "年度採購金額(NT$)"];
+      const headerRow = ws.getRow(4);
+      header.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.fill = HEADER_FILL;
+        cell.font = { name: "Arial", bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        cell.border = BORDER;
+      });
+      headerRow.height = 30;
+
+      let r = 5;
+      rows.forEach((row) => {
+        const values = [row.spec, row.price, row.qty, ...row.monthly, row.amount];
+        values.forEach((v, i) => {
+          const cell = ws.getCell(r, i + 1);
+          cell.value = v;
+          cell.font = { name: "Arial", bold: i === 0 };
+          cell.border = BORDER;
+          if (i === 1) cell.numFmt = "#,##0";
+          if (i === 2 || (i >= 3 && i < 3 + orderMonths)) cell.numFmt = "#,##0.0";
+          if (i === 3 + orderMonths) cell.numFmt = "#,##0";
+        });
+        r += 1;
+      });
+
+      const totalValues = ["合計", "", qtyTotal, ...monthTotals, amtTotal];
+      totalValues.forEach((v, i) => {
+        const cell = ws.getCell(r, i + 1);
+        cell.value = v === "" ? null : v;
+        cell.font = { name: "Arial", bold: true };
+        cell.fill = TOTAL_FILL;
+        cell.border = BORDER;
+        if (i === 2 || (i >= 3 && i < 3 + orderMonths)) cell.numFmt = "#,##0.0";
+        if (i === 3 + orderMonths) cell.numFmt = "#,##0";
+      });
+      r += 2;
+
+      const noteCell = ws.getCell(r, 1);
+      noteCell.value = "註：月份交貨量預設為年度採購量平均分配（每月約1/7），如有淡旺季差異，請直接修改月份欄位數字（不影響年度採購量與金額）。";
+      noteCell.font = { name: "Arial", italic: true, size: 9, color: { argb: "FF808080" } };
+      noteCell.fill = NOTE_FILL;
+      noteCell.alignment = { wrapText: true, vertical: "top" };
+      ws.mergeCells(r, 1, r, 4 + orderMonths);
+      ws.getRow(r).height = 40;
+
+      ws.columns = [{ width: 12 }, { width: 12 }, { width: 16 }, ...monthLabels.map(() => ({ width: 11 })), { width: 16 }];
+    });
+
+    if (unallocatedSpecs.length > 0) {
+      const ws = workbook.addWorksheet("備註");
+      ws.getCell(1, 1).value = "以下規格因缺少報價或分配不足，未能完整列入訂單，請另行確認";
+      ws.getCell(1, 1).font = { name: "Arial", bold: true };
+      unallocatedSpecs.forEach((n, i) => { ws.getCell(3 + i, 1).value = n; ws.getCell(3 + i, 1).font = { name: "Arial" }; });
+      ws.getColumn(1).width = 20;
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "採購訂單.xlsx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPurchaseOrders = () => {
+    const orderData = buildOrderData();
+    if (typeof window !== "undefined" && window.ExcelJS) {
+      exportStyled(orderData);
+    } else {
+      exportPlain(orderData);
+    }
+  };
+
   return (
     <div className="pas-root" style={{ maxWidth: 760, margin: "0 auto" }}>
       <style>{STYLE}</style>
@@ -600,6 +830,24 @@ function ProcurementAllocationSystem() {
               </span>
             </div>
             <div style={{ fontSize: 12.5, color: "var(--text-2)", marginBottom: 12 }}>{detection.detail}</div>
+
+            {productOptions.length > 1 && (
+              <div style={{ marginBottom: 14, padding: 10, background: "var(--blue-tint)", borderRadius: 8 }}>
+                <div style={{ fontSize: 12.5, color: "var(--text-1)", marginBottom: 8, fontWeight: 600 }}>
+                  這份報表裡有 {productOptions.length} 個不同品名，勾選要一起合併計算的品項（預設全選＝全部合併）
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {productOptions.map((p) => (
+                    <label key={p.name} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-1)", cursor: "pointer" }}>
+                      <input type="checkbox" checked={productChoices.includes(p.name)} onChange={() => toggleProduct(p.name)} />
+                      <span style={{ fontWeight: productChoices.includes(p.name) ? 600 : 400 }}>{p.name}</span>
+                      <span style={{ color: "var(--text-2)", fontSize: 11 }}>（{p.count} 列資料）</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom: 4 }}>
               <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>規格欄</div>
               <select value={specColSel} onChange={(e) => setSpecColSel(Number(e.target.value))} className="pas-input" style={{ width: "100%", marginBottom: 12 }}>
@@ -638,6 +886,7 @@ function ProcurementAllocationSystem() {
             </div>
             <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 10 }}>
               成功比對 {importInfo?.matchedRows} 列，略過 {importInfo?.skippedRows} 列（無法辨識規格或數量）
+              {importInfo?.filteredOut > 0 && <>，另有 {importInfo.filteredOut} 列因不屬於已勾選的品項而排除</>}
             </div>
             <div style={{ maxHeight: 220, overflowY: "auto", borderRadius: 8, background: "var(--bg-fill)" }}>
               {importPreview.map((row, i) => (
@@ -846,6 +1095,34 @@ function ProcurementAllocationSystem() {
             </div>
           );
         })}
+      </div>
+
+      <div style={{ marginTop: 22 }}>
+        <div className="pas-eyebrow">月度訂購單</div>
+        <div className="pas-card" style={{ padding: 14 }}>
+          <div style={{ fontSize: 12.5, color: "var(--text-2)", marginBottom: 12 }}>
+            依目前的分配結果，產生各廠商可直接下單用的 Excel 訂購單，年度採購量會平均拆成每月交貨量
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-end", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>起始年月</div>
+              <input type="month" value={orderStartMonth} onChange={(e) => setOrderStartMonth(e.target.value)} className="pas-input" />
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-2)", marginBottom: 4 }}>分幾期交貨</div>
+              <input type="number" min={1} max={12} value={orderMonths} onChange={(e) => setOrderMonths(Math.max(1, Number(e.target.value) || 1))} className="pas-input" style={{ width: 70 }} />
+            </div>
+            <button
+              onClick={exportPurchaseOrders}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--blue)", color: "#fff", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+            >
+              <Upload size={14} style={{ transform: "rotate(180deg)" }} aria-hidden="true" /> 匯出各廠商訂購單(Excel)
+            </button>
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text-2)" }}>
+            匯出的 Excel 每家廠商各一個工作表，欄位為規格／單價／年度採購量／每月交貨量／年度金額，附標題色底、粗體、框線；若有規格因缺報價或分配不足而沒能完整涵蓋，會另外列在「備註」工作表。
+          </div>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 7, marginTop: 20, fontSize: 12, color: "var(--text-2)" }}>
