@@ -1,7 +1,46 @@
-import React, { useState, useMemo, useRef } from "react";
-import { Plus, Minus, AlertTriangle, TrendingDown, Info, Anchor, Upload, Check, X } from "lucide-react";
-import * as XLSX from "xlsx";
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>採購分配系統</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: #F2F2F7; }
+  @media (prefers-color-scheme: dark) { html, body { background: #000000; } }
+  #root { min-height: 100vh; box-sizing: border-box; }
+  * { -webkit-tap-highlight-color: transparent; }
+</style>
+</head>
+<body>
+<div id="root">系統啟動中...</div>
 
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useRef } = React;
+
+/* ---------- inline icons (no external icon package needed) ---------- */
+function Icon({ children, size = 16, color = "currentColor", strokeWidth = 2, style, ...rest }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color}
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={style} {...rest}>
+      {children}
+    </svg>
+  );
+}
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></Icon>;
+const Minus = (p) => <Icon {...p}><line x1="5" y1="12" x2="19" y2="12" /></Icon>;
+const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></Icon>;
+const Check = (p) => <Icon {...p}><polyline points="20 6 9 17 4 12" /></Icon>;
+const Info = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></Icon>;
+const AlertTriangle = (p) => <Icon {...p}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></Icon>;
+const TrendingDown = (p) => <Icon {...p}><polyline points="23 18 13.5 8.5 8.5 13.5 1 6" /><polyline points="17 18 23 18 23 12" /></Icon>;
+const Upload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></Icon>;
+const Anchor = (p) => <Icon {...p}><circle cx="12" cy="5" r="3" /><line x1="12" y1="22" x2="12" y2="8" /><path d="M5 12H2a10 10 0 0 0 20 0h-3" /></Icon>;
+
+/* ---------- helpers ---------- */
 const fmt = (n) => Math.round(n).toLocaleString("zh-TW");
 const fmt1 = (n) => (Math.round(n * 10) / 10).toLocaleString("zh-TW");
 
@@ -97,7 +136,7 @@ const VENDOR_TILE = [
 
 function vendorVar(idx, suffix) { return `var(--${VENDOR_TILE[idx % VENDOR_TILE.length].key}${suffix})`; }
 
-export default function ProcurementAllocationSystem() {
+function ProcurementAllocationSystem() {
   const idRef = useRef(100);
   const nextId = () => ++idRef.current;
 
@@ -794,3 +833,10 @@ export default function ProcurementAllocationSystem() {
     </div>
   );
 }
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<ProcurementAllocationSystem />);
+</script>
+</body>
+</html>
